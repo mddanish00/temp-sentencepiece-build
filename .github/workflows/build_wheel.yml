@@ -29,59 +29,98 @@ jobs:
 
       - name: Apply patches to sentencepiece
         working-directory: ${{github.workspace}}/sentencepiece
-        run: git apply ../patches/*.patch
+        run: |
+          git apply ${{github.workspace}}/patches/add-missing-cstdint.patch
+          git apply ${{github.workspace}}/patches/bump-cmake-minimum-required-version.patch
+          git apply ${{github.workspace}}/patches/fix-crash-in-unigram-model-training.patch
+          git apply ${{github.workspace}}/patches/general-ci-refresh.patch
           
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v5
         with:
-          version: "latest"
-          python-version: "3.x"
-
-      - name: Set up QEMU
-        if: runner.os == 'Linux'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
+          python-version: "3.12"
 
       - name: Build for Windows
         if: runner.os == 'Windows'
+        working-directory: ${{github.workspace}}/sentencepiece
         run: |
-          cmake -A Win32 -B ${{github.workspace}}/sentencepiece/build_win32 -DSPM_ENABLE_SHARED=OFF -DCMAKE_INSTALL_PREFIX=${{github.workspace}}/sentencepiece/build/root_win32
-          cmake --build ${{github.workspace}}/sentencepiece/build_win32 --config Release --target install --parallel 8
-          cmake -A x64   -B ${{github.workspace}}/sentencepiece/build_amd64 -DSPM_ENABLE_SHARED=OFF -DCMAKE_INSTALL_PREFIX=${{github.workspace}}/sentencepiece/build/root_amd64
-          cmake --build ${{github.workspace}}/sentencepiece/build_amd64 --config Release --target install --parallel 8
-          cmake -A arm64 -B ${{github.workspace}}/sentencepiece/build_arm64 -DSPM_ENABLE_SHARED=OFF -DCMAKE_INSTALL_PREFIX=${{github.workspace}}/sentencepiece/build/root_arm64
-          cmake --build ${{github.workspace}}/sentencepiece/build_arm64 --config Release --target install --parallel 8
+          cmake -A Win32 -B build_win32 -DSPM_ENABLE_SHARED=OFF -DCMAKE_INSTALL_PREFIX=${{github.workspace}}/sentencepiece/build/root_win32
+          cmake --build build_win32 --config Release --target install --parallel 8
+          cmake -A x64   -B build_amd64 -DSPM_ENABLE_SHARED=OFF -DCMAKE_INSTALL_PREFIX=${{github.workspace}}/sentencepiece/build/root_amd64
+          cmake --build build_amd64 --config Release --target install --parallel 8
+          cmake -A arm64 -B build_arm64 -DSPM_ENABLE_SHARED=OFF -DCMAKE_INSTALL_PREFIX=${{github.workspace}}/sentencepiece/build/root_arm64
+          cmake --build build_arm64 --config Release --target install --parallel 8
 
       - name: Build for Mac
         if: runner.os == 'macOS'
+        working-directory: ${{github.workspace}}/sentencepiece
         run: |
-          cmake -B ${{github.workspace}}/sentencepiece/build -DSPM_ENABLE_SHARED=OFF -DCMAKE_INSTALL_PREFIX=${{github.workspace}}/sentencepiece/build/root
-          cmake --build ${{github.workspace}}/sentencepiece/build --config Release --target install --parallel 8
+          cmake -B build -DSPM_ENABLE_SHARED=OFF -DCMAKE_INSTALL_PREFIX=${{github.workspace}}/sentencepiece/build/root
+          cmake --build build --config Release --target install --parallel 8
         env:
           CMAKE_OSX_ARCHITECTURES: arm64;x86_64
 
       - name: Install cibuildwheel
         working-directory: ${{github.workspace}}/sentencepiece/python
         run: |
-          uv pip install --require-hashes --no-dependencies -r ../.github/workflows/requirements/base.txt
-          uv pip install --require-hashes --no-dependencies -r ../.github/workflows/requirements/cibuildwheel.txt
+          pip install uv
+          uv pip install --system --require-hashes --no-deps -r ../.github/workflows/requirements/base.txt
+          uv pip install --system --require-hashes --no-deps -r ../.github/workflows/requirements/cibuildwheel.txt
+
+      - name: Print cibuildwheel
+        working-directory: ${{github.workspace}}/sentencepiece/python
+        run: python -m cibuildwheel --print-build-identifiers
+        env:
+          CIBW_BUILD: cp313-*
+          CIBW_SKIP: pp* *-musllinux_*
+
+      - name: Replace symlinks
+        working-directory: ${{github.workspace}}/sentencepiece
+        run: |
+          # Replace external symlinks with copies to avoid issues with cibuildwheel
+          rm python/test/botchan.txt
+          cp data/botchan.txt python/test/
 
       - name: Build wheels
-        working-directory: ${{github.workspace}}/sentencepiece/python
-        run: uv run cibuildwheel --output-dir wheelhouse
+        working-directory: ${{github.workspace}}/sentencepiece
+        run: |
+          python -m cibuildwheel --output-dir python/wheelhouse python
         env:
-          CIBW_ARCHS_LINUX: auto aarch64
+          CIBW_ARCHS_LINUX: auto
           CIBW_ARCHS_MACOS: x86_64 universal2 arm64
           CIBW_ARCHS_WINDOWS: auto ARM64
           CIBW_BUILD: cp313-*
-          CIBW_SKIP: "pp* *-musllinux_*"
+          CIBW_SKIP: pp* *-musllinux_*
           CIBW_BUILD_VERBOSITY: 1
+          CIBW_TEST_REQUIRES: pytest
+          CIBW_TEST_COMMAND: pytest {project}/python/test
+          CIBW_BUILD_FRONTEND: "build[uv]"
+
+      - name: Build sdist archive
+        working-directory: ${{github.workspace}}/sentencepiece/python
+        if: runner.os == 'macOS'
+        run: sh build_sdist.sh
+
+      - name: Validate sdist archive
+        working-directory: ${{github.workspace}}/sentencepiece
+        if: runner.os == 'macOS'
+        run: twine check python/dist/*.tar.gz
+
+      - name: Build wheel from sdist
+        working-directory: ${{github.workspace}}/sentencepiece
+        shell: bash
+        if: runner.os == 'macOS'
+        run: python -m pip wheel python/dist/*.tar.gz --verbose
+
+      - name: Copy sdist
+        working-directory: ${{github.workspace}}/sentencepiece/python
+        if: runner.os == 'macOS'
+        run: cp -f dist/*.tar.gz wheelhouse/
 
       - name: Upload wheel release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ./sentencepiece/python/wheelhouse/*.whl
+          file: ./sentencepiece/python/wheelhouse/*
           tag: v0.2.0
           overwrite: true
           file_glob: true
