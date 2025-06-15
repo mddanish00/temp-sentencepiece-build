@@ -1,0 +1,87 @@
+name: Build Wheels
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build_wheels:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+    runs-on: ${{ matrix.os }}
+    name: Build wheels on ${{ matrix.os }}
+
+    permissions:
+      contents: write # svenstaro/upload-release-action 
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout sentencepiece repo
+        uses: actions/checkout@v4
+        with:
+          repository: google/sentencepiece
+          path: sentencepiece
+          ref: v0.2.0
+
+      - name: Apply patches to sentencepiece
+        working-directory: ${{github.workspace}}/sentencepiece
+        run: git apply ../patches/*.patch
+          
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+          python-version: "3.x"
+
+      - name: Set up QEMU
+        if: runner.os == 'Linux'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build for Windows
+        if: runner.os == 'Windows'
+        run: |
+          cmake -A Win32 -B ${{github.workspace}}/sentencepiece/build_win32 -DSPM_ENABLE_SHARED=OFF -DCMAKE_INSTALL_PREFIX=${{github.workspace}}/sentencepiece/build/root_win32
+          cmake --build ${{github.workspace}}/sentencepiece/build_win32 --config Release --target install --parallel 8
+          cmake -A x64   -B ${{github.workspace}}/sentencepiece/build_amd64 -DSPM_ENABLE_SHARED=OFF -DCMAKE_INSTALL_PREFIX=${{github.workspace}}/sentencepiece/build/root_amd64
+          cmake --build ${{github.workspace}}/sentencepiece/build_amd64 --config Release --target install --parallel 8
+          cmake -A arm64 -B ${{github.workspace}}/sentencepiece/build_arm64 -DSPM_ENABLE_SHARED=OFF -DCMAKE_INSTALL_PREFIX=${{github.workspace}}/sentencepiece/build/root_arm64
+          cmake --build ${{github.workspace}}/sentencepiece/build_arm64 --config Release --target install --parallel 8
+
+      - name: Build for Mac
+        if: runner.os == 'macOS'
+        run: |
+          cmake -B ${{github.workspace}}/sentencepiece/build -DSPM_ENABLE_SHARED=OFF -DCMAKE_INSTALL_PREFIX=${{github.workspace}}/sentencepiece/build/root
+          cmake --build ${{github.workspace}}/sentencepiece/build --config Release --target install --parallel 8
+        env:
+          CMAKE_OSX_ARCHITECTURES: arm64;x86_64
+
+      - name: Install cibuildwheel
+        working-directory: ${{github.workspace}}/sentencepiece/python
+        run: |
+          uv pip install --require-hashes --no-dependencies -r ../.github/workflows/requirements/base.txt
+          uv pip install --require-hashes --no-dependencies -r ../.github/workflows/requirements/cibuildwheel.txt
+
+      - name: Build wheels
+        working-directory: ${{github.workspace}}/sentencepiece/python
+        run: uv run cibuildwheel --output-dir wheelhouse
+        env:
+          CIBW_ARCHS_LINUX: auto aarch64
+          CIBW_ARCHS_MACOS: x86_64 universal2 arm64
+          CIBW_ARCHS_WINDOWS: auto ARM64
+          CIBW_BUILD: cp313-*
+          CIBW_SKIP: "pp* *-musllinux_*"
+          CIBW_BUILD_VERBOSITY: 1
+
+      - name: Upload wheel release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./sentencepiece/python/wheelhouse/*.whl
+          tag: v0.2.0
+          overwrite: true
+          file_glob: true
