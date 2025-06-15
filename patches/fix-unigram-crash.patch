@@ -1,0 +1,23 @@
+From d19ac45c919602cb041a86599d0593d24a150ac2 Mon Sep 17 00:00:00 2001
+From: Aditya Pillai <pilleye@meta.com>
+Date: Thu, 13 Feb 2025 13:30:20 -0500
+Subject: [PATCH] fix crash in unigram model training
+
+cherry pick 0fe7add, was blasted away in https://github.com/pilleye/sentencepiece/commit/53de76561cfc149d3c01037f0595669ad32a5e7c
+---
+ src/unigram_model_trainer.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/unigram_model_trainer.cc b/src/unigram_model_trainer.cc
+index 6badadec..8e674670 100644
+--- a/src/unigram_model_trainer.cc
++++ b/src/unigram_model_trainer.cc
+@@ -273,7 +273,7 @@ TrainerModel::SentencePieces Trainer::MakeSeedSentencePiecesInternal() {
+     for (node_int_type i = 0; i < node_num; ++i) {
+       const node_int_type offset = SA[L[i]];
+       const node_int_type len = D[i];
+-      if (len <= 1) {
++      if (len <= 1 || offset >= array.size() || offset + len >= array.size()) {
+         continue;
+       }
+       const char32 *begin = &array[offset];

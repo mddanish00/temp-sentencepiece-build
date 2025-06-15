@@ -1,0 +1,22 @@
+From c4221363d1f004f85f9cc4096e601d6b1fbfaa84 Mon Sep 17 00:00:00 2001
+From: Martin Hoyer <mhoyer@redhat.com>
+Date: Mon, 21 Apr 2025 15:57:33 +0200
+Subject: [PATCH] Add missing <cstdint> in sentencepiece_processor.h
+
+Fixes "`uint32_t` does not name a type" gemma.cpp build errors
+---
+ src/sentencepiece_processor.h | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/sentencepiece_processor.h b/src/sentencepiece_processor.h
+index dd3f092e..010d5007 100644
+--- a/src/sentencepiece_processor.h
++++ b/src/sentencepiece_processor.h
+@@ -15,6 +15,7 @@
+ #ifndef SENTENCEPIECE_PROCESSOR_H_
+ #define SENTENCEPIECE_PROCESSOR_H_
+ 
++#include <cstdint>
+ #include <cstring>
+ #include <memory>
+ #include <string>
